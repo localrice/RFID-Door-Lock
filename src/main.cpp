@@ -1,4 +1,6 @@
 #include <Arduino.h>
+#include <ESP8266WebServer.h>
+#include <ESP8266WiFi.h>
 #include <LittleFS.h>
 #include <MFRC522.h>
 #include <SPI.h>
@@ -8,9 +10,13 @@
 #define SS_PIN D2  // SDA - 04
 
 MFRC522 scanner(SS_PIN, RST_PIN);
+ESP8266WebServer server(80);
 
 // globals
 String lastScannedUID = "";
+bool webServerActive = false;
+const char* ssid = "RFID register";
+const char* password = "robotics";
 
 // forward declarations
 bool registerUID(String uid, String name, String role);
@@ -205,4 +211,102 @@ String scanTag() {
   scanner.PCD_StopCrypto1();
 
   return uidString;
+}
+
+/**
+ * @brief Starts the Access Point and web server for the UID registration
+ */
+void startWebServer() {
+  if (webServerActive)
+    return;
+
+  WiFi.softAP(ssid, password);
+  Serial.printf("Started AP with SSID: %s, Password: %s \n", ssid, password);
+  Serial.printf("IP address: %s \n", WiFi.softAPIP());
+
+  // Serve main HTML page
+  server.on("/", HTTP_GET, []() {
+    String html = R"rawliteral(
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>RFID Registration</title>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <style>
+        body { font-family: Arial; text-align: center; margin-top: 40px; }
+        input { padding: 10px; margin: 5px; width: 80%%; max-width: 300px; }
+        button { padding: 10px 20px; margin-top: 15px; }
+        .uid { font-weight: bold; color: #0077cc; }
+      </style>
+      <script>
+        async function updateUID() {
+          const res = await fetch('/getuid');
+          const uid = await res.text();
+          document.getElementById('uid').value = uid || '';
+          document.getElementById('uidDisplay').innerText = uid || 'No card detected';
+        }
+        setInterval(updateUID, 1000); // auto refresh UID every second
+      </script>
+    </head>
+    <body>
+      <h2>RFID UID Registration</h2>
+      <p>Scanned UID: <span id="uidDisplay" class="uid">Waiting...</span></p>
+      <form action="/register" method="POST">
+        <input type="text" id="uid" name="uid" placeholder="UID" readonly><br>
+        <input type="text" name="name" placeholder="Enter Name" required><br>
+        <input type="text" name="role" placeholder="Enter Role (A/U)" required><br>
+        <button type="submit">Register</button>
+      </form>
+    </body>
+    </html>
+    )rawliteral";
+    server.send(200, "text/html", html);
+  });
+
+  // for fetching UIDs
+  server.on("/getuid", HTTP_GET, []() { server.send(200, "text/plain", lastScannedUID); });
+
+  // handle form submission
+  server.on("/register", HTTP_POST, []() {
+    String uid = server.arg("uid");
+    String name = server.arg("name");
+    String role = server.arg("role");
+
+    if (uid.isEmpty()) {
+      server.send(400, "text/plain", "No UID scanned!");
+      return;
+    }
+
+    if (checkUID(uid)) {
+      server.send(200, "text/plain", "UID already exists");
+      return;
+    }
+
+    if (registerUID(uid, name, role)) {
+      server.send(200, "text/plain", "UID registered successfully!");
+      Serial.printf("New UID registered via web: %s | %s | %s\n", uid.c_str(), name.c_str(),
+                    role.c_str());
+    } else {
+      server.send(500, "text/plain", "Failed to save UID!");
+    }
+  });
+
+  server.begin();
+  webServerActive = true;
+  Serial.println("Web server started");
+}
+
+/**
+ * @brief Stops the Access Point and Web Server
+ */
+void stopWebServer() {
+  if (!webServerActive)
+    return;
+
+  server.stop();
+  WiFi.softAPdisconnect(true);
+  webServerActive = false;
+
+  Serial.println("Web server stopped");
 }
