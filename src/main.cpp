@@ -9,7 +9,38 @@
 
 MFRC522 scanner(SS_PIN, RST_PIN);
 
+// globals
 String lastScannedUID = "";
+
+// forward declarations
+bool registerUID(String uid, String name, String role);
+bool checkUID(String uid, String* name, String* role);
+
+String scanTag();
+
+void setup() {
+  Serial.begin(115200);
+
+  if (!LittleFS.begin()) {
+    Serial.println("Little Fs failed to mount");
+    while (true)
+      ;
+  }
+  Serial.println("FS ready");
+
+  // initialize the MFRC522 scanner
+  SPI.begin();
+  scanner.PCD_Init();
+  Serial.println("scanner ready");
+}
+
+void loop() {
+  String uid = scanTag();
+
+  if (uid != "") {
+    Serial.printf("UID scanned: %s \n", uid.c_str());
+  }
+}
 
 /**
  * @brief Registers (saves) a new RFID UID entry to the LittleFS storage.
