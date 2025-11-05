@@ -1,27 +1,37 @@
 #include <Arduino.h>
 #include <LittleFS.h>
+#include <MFRC522.h>
+#include <SPI.h>
+
+// pinouts
+#define RST_PIN D1 // RST - 05
+#define SS_PIN D2  // SDA - 04
+
+MFRC522 scanner(SS_PIN, RST_PIN);
+
+String lastScannedUID = "";
 
 /**
- * @brief Registers (save) a new RFID UID entry to the LittleFS storage.
+ * @brief Registers (saves) a new RFID UID entry to the LittleFS storage.
  *
- * This function adds a new line to `uids.txt` in CSV format: `UID,Name,Role`.
+ * This function appends a new record to `/uids.txt` in CSV format: `UID,Name,Role`.
  * UID and Role parameters are cleaned and converted to uppercase for consistency.
- * The file is opened in append mode, so new records are added at the end.
- * The function does not perform duplicate checks;
- * You are expected to ensure that the UID does not already exist using
- * @ref cehckUID() before calling this function
+ * The function does not perform duplicate checks; you must verify that the
+ * UID does not already exist using @ref checkUID() before calling this function.
  *
  * Example usage:
- * @code
+ * ```cpp
  * if (!checkUID(uid)) {
  *   registerUID(uid, name, role);
  * }
- * @endcode
- * @param uid The RFID card's UID string (e.g., "AA:BB:CC:DD")
- * @param name The user's name associated with the UID
- * @param role The user's role (e.g., "A" for admin, "U" for user).
+ * ```
  *
- * @return
+ * @param uid  The RFID card's UID string (e.g., "AA:BB:CC:DD").
+ * @param name The user's name associated with the UID.
+ * @param role The user's role (e.g., "A" for admin, "U" for user").
+ *
+ * @return true  If the entry was successfully written to the file.
+ * @return false If file open or write failed.
  */
 bool registerUID(String uid, String name, String role) {
   uid.trim();
@@ -52,17 +62,17 @@ bool registerUID(String uid, String name, String role) {
  * return the associated name and role.
  *
  * Example line in '/uids.txt':
- * @code
+ * ```
  * AA:BB:CC:DD,Preetom,A
- * @endcode
+ * ```
  *
  * Example usage:
- * @code
+ * ```cpp
  * String name, role;
  * if (checkUID("AA:BB:CC:DD", &name, &role)) {
  *   Serial.printf("Welcome %s (%s)\n", name.c_str(), role.c_str());
  * }
- * @endcode
+ * ```
  *
  * @param uid   The UID string to check (e.g., "AA:BB:CC:DD").
  * @param name  Optional pointer to a String variable to receive the user's name (nullable).
@@ -86,6 +96,7 @@ bool checkUID(String uid, String* name = nullptr, String* role = nullptr) {
     return false;
   }
 
+  // search for the UID line by line
   while (file.available()) {
     String line = file.readStringUntil('\n');
     line.trim();
@@ -104,7 +115,7 @@ bool checkUID(String uid, String* name = nullptr, String* role = nullptr) {
     storedUID.trim();
     storedUID.toUpperCase();
 
-    // checking if it exists
+    // checking if UID exists
     if (storedUID == uid) {
       if (name != nullptr)
         *name = line.substring(firstComma + 1, secondComma);
@@ -120,4 +131,47 @@ bool checkUID(String uid, String* name = nullptr, String* role = nullptr) {
   file.close();
   Serial.println("UID not found");
   return false;
+}
+
+/**
+ * @brief Scans for an RFID tag and returns its UID as a formatted string.
+ *
+ * This function checks if a new RFID tag is present using the MFRC522 scanner.
+ * If a card is detected, it reads the card's serial number (UID) byte-by-byte
+ * and converts it to a human-readable hexadecimal string format such as:
+ * `AA:BB:CC:DD` or `04:3A:7F:92` depending on card type.
+ *
+ * @note
+ * - If no tag is detected, an empty string is returned (`""`).
+ *
+ * - This function should be called repeatedly in the main loop for continuous scanning.
+ *
+ * @return String UID of the detected RFID tag (e.g., "AA:BB:CC:DD"), or an empty string if none.
+ */
+String scanTag() {
+  if (!scanner.PICC_IsNewCardPresent() || !scanner.PICC_ReadCardSerial())
+    return "";
+
+  // constructing the UID string from the bytes of the card
+  String uidString = "";
+  for (byte i = 0; i < scanner.uid.size; i++) {
+    // add leading zero if the byte < 0x10 (ensuring 2-digit formatting)
+    if (scanner.uid.uidByte[i] < 0x10)
+      uidString += "0";
+
+    // convert byte to hexadecimal and append
+    uidString += String(scanner.uid.uidByte[i], HEX);
+
+    // adding ':' separator except after the last byte
+    if (i < scanner.uid.size - 1)
+      uidString += ":";
+  }
+
+  uidString.toUpperCase();
+
+  // Halt communication with the card and stop encryption
+  scanner.PICC_HaltA();
+  scanner.PCD_StopCrypto1();
+
+  return uidString;
 }
