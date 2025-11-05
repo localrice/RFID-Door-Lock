@@ -7,6 +7,7 @@
  * This function adds a new line to `uids.txt` in CSV format: `UID,Name,Role`.
  * UID and Role parameters are cleaned and converted to uppercase for consistency.
  * The file is opened in append mode, so new records are added at the end.
+ * If the UID already exists, prints a message and doesn't add it to the `uids.txt`.
  *
  * @param uid The RFID card's UID string (e.g., "AA:BB:CC:DD")
  * @param name The user's name associated with the UID
@@ -21,7 +22,11 @@ void registerUID(String uid, String name, String role) {
   role.trim();
   role.toUpperCase();
 
-  // TODO: check if UID already exists and do not add if already preset
+  // check if the UID already exists and skips adding if present
+  if (checkUID(uid)) {
+    Serial.println("UID already exists");
+    return;
+  }
 
   File file = LittleFS.open("/uids.txt", "a");
   if (!file) {
@@ -63,7 +68,7 @@ void registerUID(String uid, String name, String role) {
  * @return true  If the UID was found.
  * @return false If the UID was not found or file read failed.
  */
-bool checkUID(String uid, String* name, String* role) {
+bool checkUID(String uid, String* name = nullptr, String* role = nullptr) {
   uid.trim();
   uid.toUpperCase();
 
