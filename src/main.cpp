@@ -6,8 +6,10 @@
 #include <SPI.h>
 
 // pinouts
-#define RST_PIN D1 // RST - 05
-#define SS_PIN D2  // SDA - 04
+#define RST_PIN D1    // RST - 05
+#define SS_PIN D2     // SDA - 04
+#define LOCK_PIN D0   // Linear Actuator (TIP120) - 16
+#define BUZZER_PIN D8 // 15
 
 MFRC522 scanner(SS_PIN, RST_PIN);
 ESP8266WebServer server(80);
@@ -21,9 +23,12 @@ const char* password = "robotics";
 // forward declarations
 bool registerUID(String uid, String name, String role);
 bool checkUID(String uid, String* name, String* role);
+String scanTag();
 void startWebServer();
 void stopWebServer();
-String scanTag();
+void lockControl(bool locked);
+void buzzSuccess();
+void buzzDenied();
 
 void setup() {
   Serial.begin(115200);
@@ -40,19 +45,37 @@ void setup() {
   scanner.PCD_Init();
   Serial.println("scanner ready");
 
-  startWebServer();
+  pinMode(LOCK_PIN, OUTPUT);
+  digitalWrite(LOCK_PIN, LOW); // start locked
+  Serial.println("Lock initialized (locked)");
+
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
 }
 
 void loop() {
-  if (webServerActive)
-    server.handleClient();
-
   String uid = scanTag();
 
   if (uid != "") {
     lastScannedUID = uid;
-    Serial.printf("UID scanned: %s \n", uid.c_str());
+    Serial.printf("Scanned UID: %s\n", uid.c_str());
+
+    // Access control check
+    String name, role;
+    if (checkUID(uid, &name, &role)) {
+      Serial.printf("✅ Access Granted to %s (%s)\n", name.c_str(), role.c_str());
+      buzzSuccess();
+      lockControl(false); // Unlock door
+      delay(5000);        // Door open for 10 seconds
+      lockControl(true);  // Lock again
+    } else {
+      Serial.println("Access Denied!");
+      buzzDenied();
+      lockControl(true);
+    }
   }
+
+  delay(200);
 }
 
 /**
@@ -316,4 +339,35 @@ void stopWebServer() {
   webServerActive = false;
 
   Serial.println("Web server stopped");
+}
+
+/**
+ * @brief Controls the linear actuator connected via TIP120 transistor.
+ *
+ * @param locked true to engage lock (LOW), false to unlock (HIGH)
+ */
+void lockControl(bool locked) {
+  if (locked) {
+    digitalWrite(LOCK_PIN, LOW); // actuator off
+    Serial.println("🔒 Door Locked");
+  } else {
+    digitalWrite(LOCK_PIN, HIGH); // actuator active
+    Serial.println("🔓 Door Unlocked");
+  }
+}
+
+void buzzSuccess() {
+  tone(BUZZER_PIN, 1000, 100);
+  delay(100);
+  tone(BUZZER_PIN, 1500, 150);
+  delay(100);
+  noTone(BUZZER_PIN);
+}
+
+void buzzDenied() {
+  for (int i = 0; i < 2; i++) {
+    tone(BUZZER_PIN, 400, 120);
+    delay(120);
+  }
+  noTone(BUZZER_PIN);
 }
