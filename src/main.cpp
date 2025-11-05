@@ -21,7 +21,8 @@ const char* password = "robotics";
 // forward declarations
 bool registerUID(String uid, String name, String role);
 bool checkUID(String uid, String* name, String* role);
-
+void startWebServer();
+void stopWebServer();
 String scanTag();
 
 void setup() {
@@ -38,12 +39,18 @@ void setup() {
   SPI.begin();
   scanner.PCD_Init();
   Serial.println("scanner ready");
+
+  startWebServer();
 }
 
 void loop() {
+  if (webServerActive)
+    server.handleClient();
+
   String uid = scanTag();
 
   if (uid != "") {
+    lastScannedUID = uid;
     Serial.printf("UID scanned: %s \n", uid.c_str());
   }
 }
@@ -222,7 +229,7 @@ void startWebServer() {
 
   WiFi.softAP(ssid, password);
   Serial.printf("Started AP with SSID: %s, Password: %s \n", ssid, password);
-  Serial.printf("IP address: %s \n", WiFi.softAPIP());
+  Serial.printf("IP address: %s \n", WiFi.softAPIP().toString().c_str());
 
   // Serve main HTML page
   server.on("/", HTTP_GET, []() {
