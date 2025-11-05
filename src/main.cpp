@@ -29,6 +29,10 @@ bool isUnlocked = false;
 unsigned long unlockStartTime = 0;
 const unsigned long UNLOCK_DURATION = 7000UL; // milliseconds (7 seconds)
 
+// mode timeout for ADD new uid mode
+unsigned long addModeStartTime = 0;
+const unsigned long ADD_MODE_TIMEOUT = 300000UL; // 5 minutes (300,000 ms)
+
 enum SystemMode { DOOR_LOCK_MODE, ADD_NEW_UID_MODE };
 SystemMode currentMode = DOOR_LOCK_MODE;
 
@@ -83,10 +87,12 @@ void loop() {
     if (currentMode == DOOR_LOCK_MODE) {
       currentMode = ADD_NEW_UID_MODE;
       addUIDStage = 0;
+      addModeStartTime = millis(); // start the timer
       Serial.println("Switched to ADD_NEW_UID_MODE ");
       buzzSuccess();
     } else {
       currentMode = DOOR_LOCK_MODE;
+      addUIDStage = 0;
       stopWebServer();
       Serial.println("Switched to DOOR_LOCK_MODE");
       buzzDenied();
@@ -129,7 +135,7 @@ void loop() {
     String uid = scanTag();
     if (!uid.isEmpty()) {
       lastScannedUID = uid;
-
+      addModeStartTime = millis();
       if (addUIDStage == 0) {
         // Stage 0: waiting for admin
         String name, role;
@@ -139,6 +145,7 @@ void loop() {
             buzzSuccess();
             addUIDStage = 1;
             startWebServer();
+            addModeStartTime = millis(); // reset timeout when admin verified
           } else {
             Serial.println("Access denied");
             buzzDenied();
@@ -146,6 +153,15 @@ void loop() {
         }
       }
     }
+  }
+
+  // add timeout check
+  if (currentMode == ADD_NEW_UID_MODE && millis() - addModeStartTime >= ADD_MODE_TIMEOUT) {
+    currentMode = DOOR_LOCK_MODE;
+    addUIDStage = 0;
+    stopWebServer();
+    Serial.println("⚠️ Add Mode timeout reached — returning to DOOR_LOCK_MODE");
+    buzzDenied();
   }
 }
 
@@ -388,6 +404,7 @@ void startWebServer() {
       server.send(200, "text/plain", "UID registered successfully!");
       Serial.printf("New UID registered via web: %s | %s | %s\n", uid.c_str(), name.c_str(),
                     role.c_str());
+      addModeStartTime = millis(); // reset timeout on successful UID addition
     } else {
       server.send(500, "text/plain", "Failed to save UID!");
     }
