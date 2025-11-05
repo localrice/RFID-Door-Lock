@@ -1,0 +1,16 @@
+need functions like
+- registerUid()
+- checkUid()
+- start web portal
+
+and this kind of thing
+- two modes, normal lock mode and add new uid mode
+- web portal to input names
+
+
+format to save the data
+UID, Name, Role
+
+seperated by comma
+
+Timer to autoamtically switch to lock mode after few mins in add new uid mode
