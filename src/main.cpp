@@ -6,11 +6,11 @@
 #include <SPI.h>
 
 // pinouts
-#define RST_PIN D1    // RST - 05
-#define SS_PIN D2     // SDA - 04
-#define LOCK_PIN D0   // Linear Actuator (TIP120) - 16
-#define BUZZER_PIN D8 // 15
-
+#define RST_PIN D1     // RST - 05
+#define SS_PIN D2      // SDA - 04
+#define LOCK_PIN D0    // Linear Actuator (TIP120) - 16
+#define BUZZER_PIN D8  // 15
+#define MODE_BUTTON D3 // 0
 MFRC522 scanner(SS_PIN, RST_PIN);
 ESP8266WebServer server(80);
 
@@ -20,10 +20,22 @@ bool webServerActive = false;
 const char* ssid = "RFID register";
 const char* password = "robotics";
 
+// 0 = waiting for admin
+// 1 = waiting for new UID
+uint8_t addUIDStage = 0;
+
 // non-blocking door timing
 bool isUnlocked = false;
 unsigned long unlockStartTime = 0;
 const unsigned long UNLOCK_DURATION = 7000UL; // milliseconds (7 seconds)
+
+enum SystemMode { DOOR_LOCK_MODE, ADD_NEW_UID_MODE };
+SystemMode currentMode = DOOR_LOCK_MODE;
+
+// MODE button states
+bool lastButtonState = HIGH;
+unsigned long lastButtonPress = 0;
+const unsigned long MODE_DEBOUNCE_MS = 400;
 
 // forward declarations
 bool registerUID(String uid, String name, String role);
@@ -52,41 +64,89 @@ void setup() {
 
   pinMode(LOCK_PIN, OUTPUT);
   digitalWrite(LOCK_PIN, LOW); // start locked
-  Serial.println("Lock initialized (locked)");
+  pinMode(MODE_BUTTON, INPUT_PULLUP);
 
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);
 }
 
 void loop() {
-  String uid = scanTag();
+  if (webServerActive)
+    server.handleClient();
 
-  if (isUnlocked && (millis() - unlockStartTime >= UNLOCK_DURATION)) {
-    lockControl(true);
-    isUnlocked = false;
-    Serial.println("Door auto-locked after timeout");
-  }
+  // handling MODE button press and logic
+  bool buttonState = digitalRead(MODE_BUTTON);
+  if (buttonState == LOW && lastButtonState == HIGH &&
+      millis() - lastButtonPress > MODE_DEBOUNCE_MS) {
+    lastButtonPress = millis();
 
-  if (uid != "") {
-    lastScannedUID = uid;
-    Serial.printf("Scanned UID: %s\n", uid.c_str());
-
-    // Access control check
-    String name, role;
-    if (checkUID(uid, &name, &role)) {
-      Serial.printf("✅ Access Granted to %s (%s)\n", name.c_str(), role.c_str());
+    if (currentMode == DOOR_LOCK_MODE) {
+      currentMode = ADD_NEW_UID_MODE;
+      addUIDStage = 0;
+      Serial.println("Switched to ADD_NEW_UID_MODE ");
       buzzSuccess();
-      lockControl(false);         // Unlock door
-      isUnlocked = true;          // track door state
-      unlockStartTime = millis(); // record unlock time
     } else {
-      Serial.println("Access Denied!");
+      currentMode = DOOR_LOCK_MODE;
+      stopWebServer();
+      Serial.println("Switched to DOOR_LOCK_MODE");
       buzzDenied();
+    }
+  }
+  lastButtonState = buttonState;
+
+  // handling door lock mode logic
+  if (currentMode == DOOR_LOCK_MODE) {
+    // Auto-lock after timeout
+    if (isUnlocked && (millis() - unlockStartTime >= UNLOCK_DURATION)) {
       lockControl(true);
+      isUnlocked = false;
+      Serial.println("Door auto-locked after timeout");
+    }
+
+    // Scan RFID tag
+    String uid = scanTag();
+    if (!uid.isEmpty()) {
+      lastScannedUID = uid;
+      Serial.printf("Scanned UID: %s\n", uid.c_str());
+
+      String name, role;
+      if (checkUID(uid, &name, &role)) {
+        Serial.printf("Access Granted to %s (%s)\n", name.c_str(), role.c_str());
+        buzzSuccess();
+        lockControl(false);
+        isUnlocked = true;
+        unlockStartTime = millis();
+      } else {
+        Serial.println("Access Denied!");
+        buzzDenied();
+        lockControl(true);
+      }
     }
   }
 
-  delay(200);
+  // add New UID mode
+  else if (currentMode == ADD_NEW_UID_MODE) {
+    String uid = scanTag();
+    if (!uid.isEmpty()) {
+      lastScannedUID = uid;
+
+      if (addUIDStage == 0) {
+        // Stage 0: waiting for admin
+        String name, role;
+        if (checkUID(uid, &name, &role)) {
+          if (role == "A") {
+            Serial.println("Autohroized Admin");
+            buzzSuccess();
+            addUIDStage = 1;
+            startWebServer();
+          } else {
+            Serial.println("Access denied");
+            buzzDenied();
+          }
+        }
+      }
+    }
+  }
 }
 
 /**
