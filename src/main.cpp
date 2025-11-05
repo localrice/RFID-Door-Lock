@@ -20,6 +20,11 @@ bool webServerActive = false;
 const char* ssid = "RFID register";
 const char* password = "robotics";
 
+// non-blocking door timing
+bool isUnlocked = false;
+unsigned long unlockStartTime = 0;
+const unsigned long UNLOCK_DURATION = 7000UL; // milliseconds (7 seconds)
+
 // forward declarations
 bool registerUID(String uid, String name, String role);
 bool checkUID(String uid, String* name, String* role);
@@ -56,6 +61,12 @@ void setup() {
 void loop() {
   String uid = scanTag();
 
+  if (isUnlocked && (millis() - unlockStartTime >= UNLOCK_DURATION)) {
+    lockControl(true);
+    isUnlocked = false;
+    Serial.println("Door auto-locked after timeout");
+  }
+
   if (uid != "") {
     lastScannedUID = uid;
     Serial.printf("Scanned UID: %s\n", uid.c_str());
@@ -65,9 +76,9 @@ void loop() {
     if (checkUID(uid, &name, &role)) {
       Serial.printf("✅ Access Granted to %s (%s)\n", name.c_str(), role.c_str());
       buzzSuccess();
-      lockControl(false); // Unlock door
-      delay(5000);        // Door open for 10 seconds
-      lockControl(true);  // Lock again
+      lockControl(false);         // Unlock door
+      isUnlocked = true;          // track door state
+      unlockStartTime = millis(); // record unlock time
     } else {
       Serial.println("Access Denied!");
       buzzDenied();
