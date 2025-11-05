@@ -1,18 +1,22 @@
 #include <Arduino.h>
+#include <LittleFS.h>
+void registerUID(String uid, String name, String role) 
+{
+  uid.trim();
+  uid.toUpperCase();
+  name.trim();
+  role.trim();
+  role.toUpperCase();
 
-// put function declarations here:
-int myFunction(int, int);
+  // check if UID already exists and do not add if already preset
 
-void setup() {
-  // put your setup code here, to run once:
-  int result = myFunction(2, 3);
-}
+  File file = LittleFS.open("/uids.txt", "a");
+  if (!file) { Serial.println("Failed to open uid file for writing"); return; }
 
-void loop() {
-  // put your main code here, to run repeatedly:
-}
+  file.printf("%s,%s,%s\n",
+              uid.c_str(), name.c_str(), role.c_str());
+  file.close();
 
-// put function definitions here:
-int myFunction(int x, int y) {
-  return x + y;
+  Serial.printf("Added new UID: %s | Name: %s | Role: %s\n",
+                uid.c_str(), name.c_str(), role.c_str());
 }
